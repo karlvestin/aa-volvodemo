@@ -59,17 +59,23 @@ expected=$(grep -Eo '[[:xdigit:]]{128}' "${TOMCAT_FILE}.sha512" | head -n 1)
 printf '%s  %s\n' "$expected" "$TOMCAT_FILE" | sha512sum --check --status || fail "Tomcat checksum mismatch"
 
 log "Extracting Archiver Appliance"
-for artifact in quickstart.sh mgmt.war engine.war etl.war retrieval.war; do
-    if tar -tzf "$ARCHIVER_FILE" | grep -Eq "(^|/)${artifact}$"; then
-        :
-    else
-        fail "Missing ${artifact} in ${ARCHIVER_FILE}"
-    fi
-done
-# The official distribution extracts these files at its root.
+# Verify the archive before extracting. Do not pipe tar into grep -q under
+# pipefail: grep may exit early and cause tar to fail with SIGPIPE.
+tar -tzf "$ARCHIVER_FILE" >/dev/null || fail "Invalid Archiver Appliance archive: $ARCHIVER_FILE"
+
 tar -xzf "$ARCHIVER_FILE"
+
+# Official release packages normally put the WAR files and quickstart.sh
+# directly at archive root. Accommodate a single enclosing directory too.
 for artifact in quickstart.sh mgmt.war engine.war etl.war retrieval.war; do
-    [[ -f "$artifact" ]] || fail "Expected extracted file ${artifact} not present"
+    if [[ ! -f "$artifact" ]]; then
+        found=$(find . -mindepth 2 -maxdepth 4 -type f -name "$artifact" -print -quit)
+        if [[ -n "$found" ]]; then
+            cp "$found" "./$artifact"
+        else
+            fail "Missing $artifact after extraction of $ARCHIVER_FILE. Check archive with: tar -tzf $ARCHIVER_FILE | grep -E '(war|quickstart)'"
+        fi
+    fi
 done
 chmod +x quickstart.sh
 
